@@ -107,13 +107,8 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onClick }) => {
   const status = statusConfig[task.status] || statusConfig.pending;
   const priority = priorityConfig[task.priority] || priorityConfig.medium;
 
-  const createdAtText = task.createdAt
-    ? formatDateTime(task.createdAt.toDate ? task.createdAt.toDate() : new Date())
-    : 'Recently';
-
-  const completedAtText = task.completedAt
-    ? formatDateTime(task.completedAt.toDate ? task.completedAt.toDate() : new Date())
-    : null;
+  const createdAtText = formatDateTime(task.createdAt);
+  const completedAtText = task.completedAt ? formatDateTime(task.completedAt) : null;
 
   return (
     <div

@@ -11,7 +11,7 @@ export const getCurrentUser = (): UserProfile | null => {
   return {
     id: "user-1",
     name: "Team Member",
-    email: "member@business.com",
+    email: "member@gmail.com",
     role: "member"
   };
 };

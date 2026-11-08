@@ -12,23 +12,35 @@ import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager
  * rules_version = '2';
  * service cloud.firestore {
  *   match /databases/{database}/documents {
- *     // Helper function to verify user is authenticated
  *     function isAuthenticated() {
  *       return request.auth != null;
  *     }
  *
- *     // Users collection:
- *     // Authenticated users can read member profiles (for assigning tasks/showing team).
- *     // Each user can only write/update their own profile.
- *     match /users/{userId} {
- *       allow read: if isAuthenticated();
- *       allow write: if isAuthenticated() && request.auth.uid == userId;
+ *     function isAdmin() {
+ *       return isAuthenticated() && request.auth.uid == 'PlOcmP9KKLc1lf8ROjIflAyYcME3'; // Kaalvion Admin (kaalvion@gmail.com)
  *     }
  *
- *     // Tasks collection:
- *     // All 4 authenticated team members can read, create, update, and manage tasks.
+ *     function isTeamMember() {
+ *       return isAuthenticated() && (
+ *         request.auth.uid == 'YAeP6c3JHtRj6aJzIUuHLNJsqL13' || // Harshal Bhagat (harshal@gmail.com)
+ *         request.auth.uid == 'ey0O1eJCHxd6Mn2y6KKRYTQvLWh2' || // Swayam Thakur (swayam@gmail.com)
+ *         request.auth.uid == 'pYffmarasycB7klDJ1eaGjM9xvo2' || // Daksh Patil (daksh@gmail.com)
+ *         request.auth.uid == 'ml4FyajmXDZqeSYKHy9ycrTtJfU2'    // Atharv Bhagat (atharv@gmail.com)
+ *       );
+ *     }
+ *
+ *     function isAuthorizedUser() {
+ *       return isTeamMember() || isAdmin();
+ *     }
+ *
+ *     match /users/{userId} {
+ *       allow read: if isAuthorizedUser();
+ *       allow write: if isAuthorizedUser() && (request.auth.uid == userId || isAdmin());
+ *     }
+ *
  *     match /tasks/{taskId} {
- *       allow read, create, update, delete: if isAuthenticated();
+ *       allow read, create, update: if isAuthorizedUser();
+ *       allow delete: if false; // Permanent deletion disabled to safeguard audit trail
  *     }
  *   }
  * }

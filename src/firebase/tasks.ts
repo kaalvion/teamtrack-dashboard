@@ -3,8 +3,6 @@ import {
   addDoc,
   updateDoc,
   doc,
-  query,
-  orderBy,
   onSnapshot,
   serverTimestamp,
 } from 'firebase/firestore';
@@ -18,26 +16,39 @@ export interface TaskItem extends TaskDocument {
 export type TaskStatus = 'pending' | 'in-progress' | 'completed';
 export type TaskPriority = 'low' | 'medium' | 'high';
 
+export interface TaskSyncMetadata {
+  hasPendingWrites: boolean;
+  fromCache: boolean;
+}
+
 /**
- * Real-time listener for tasks from Firestore (filtered for non-deleted tasks).
+ * Real-time listener for active tasks from Firestore (filtered for non-deleted tasks).
+ * Does not use server-side orderBy to avoid omitting documents missing createdAt.
+ * Emits metadata to track whether writes are pending or synced.
  */
 export const subscribeToTasks = (
-  callback: (tasks: TaskItem[]) => void,
+  callback: (tasks: TaskItem[], metadata: TaskSyncMetadata) => void,
   onError?: (error: Error) => void
 ) => {
   const tasksRef = collection(db, 'tasks');
-  const q = query(tasksRef, orderBy('createdAt', 'desc'));
 
   return onSnapshot(
-    q,
+    tasksRef,
+    { includeMetadataChanges: true },
     (snapshot) => {
+      const metadata: TaskSyncMetadata = {
+        hasPendingWrites: snapshot.metadata.hasPendingWrites,
+        fromCache: snapshot.metadata.fromCache,
+      };
+
       const tasks: TaskItem[] = snapshot.docs
         .map((d) => ({
           id: d.id,
-          ...(d.data() as TaskDocument & { deleted?: boolean }),
+          ...(d.data({ serverTimestamps: 'estimate' }) as TaskDocument & { deleted?: boolean }),
         }))
         .filter((t) => !t.deleted); // Exclude soft-deleted tasks from active view
-      callback(tasks);
+
+      callback(tasks, metadata);
     },
     (error) => {
       console.error('Error fetching tasks from Firestore:', error);
@@ -48,22 +59,29 @@ export const subscribeToTasks = (
 
 /**
  * Real-time listener for ALL tasks including deleted ones (for History / Archives).
+ * Does not use server-side orderBy to prevent accidental exclusion of historical records.
  */
 export const subscribeToAllTasks = (
-  callback: (tasks: TaskItem[]) => void,
+  callback: (tasks: TaskItem[], metadata: TaskSyncMetadata) => void,
   onError?: (error: Error) => void
 ) => {
   const tasksRef = collection(db, 'tasks');
-  const q = query(tasksRef, orderBy('createdAt', 'desc'));
 
   return onSnapshot(
-    q,
+    tasksRef,
+    { includeMetadataChanges: true },
     (snapshot) => {
+      const metadata: TaskSyncMetadata = {
+        hasPendingWrites: snapshot.metadata.hasPendingWrites,
+        fromCache: snapshot.metadata.fromCache,
+      };
+
       const tasks: TaskItem[] = snapshot.docs.map((d) => ({
         id: d.id,
-        ...(d.data() as TaskDocument & { deleted?: boolean }),
+        ...(d.data({ serverTimestamps: 'estimate' }) as TaskDocument & { deleted?: boolean }),
       }));
-      callback(tasks);
+
+      callback(tasks, metadata);
     },
     (error) => {
       console.error('Error fetching all tasks from Firestore:', error);
@@ -74,6 +92,7 @@ export const subscribeToAllTasks = (
 
 /**
  * Create a new daily task with server timestamp for createdAt and default pending status.
+ * Awaits the addDoc write to guarantee it is submitted to Firestore.
  */
 export const createTask = async (
   title: string,
@@ -100,11 +119,13 @@ export const createTask = async (
     completedAt: null,
     deleted: false,
   };
-  return await addDoc(tasksRef, newTask);
+
+  const docRef = await addDoc(tasksRef, newTask);
+  return docRef;
 };
 
 /**
- * Update task status (e.g. pending -> completed, or reopen back to pending).
+ * Update task status (e.g. pending -> in-progress -> completed, or reopen back to pending).
  */
 export const updateTaskStatus = async (taskId: string, newStatus: TaskStatus) => {
   const taskRef = doc(db, 'tasks', taskId);
@@ -143,6 +164,7 @@ export const updateTaskDetails = async (
 
 /**
  * Soft-delete a task: sets deleted: true and timestamp for audit preservation.
+ * Does not physically purge records from Firestore.
  */
 export const softDeleteTask = async (taskId: string) => {
   const taskRef = doc(db, 'tasks', taskId);

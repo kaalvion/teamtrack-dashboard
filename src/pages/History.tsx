@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { subscribeToAllTasks, TaskItem } from '../firebase/tasks';
+import { subscribeToAllTasks, TaskItem, TaskSyncMetadata } from '../firebase/tasks';
 import { TEAM_MEMBERS, getMemberColors, getInitials } from '../utils/teamConstants';
-import { formatDateTime, isDateInRange } from '../utils/dateUtils';
+import { formatDateTime, isDateInRange, toDateObject } from '../utils/dateUtils';
 import { generateTasksPDF, PDFTaskItem } from '../utils/pdfExport';
 import { useToast } from '../components/ToastContext';
 import { TableRowSkeleton } from '../components/Skeletons';
@@ -14,13 +14,18 @@ import {
   Trash2,
   Loader2,
   FileSpreadsheet,
-  Calendar
+  Calendar,
+  Cloud,
+  CloudOff,
+  AlertTriangle
 } from 'lucide-react';
 
 export const HistoryPage: React.FC = () => {
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [syncMeta, setSyncMeta] = useState<TaskSyncMetadata | null>(null);
+  const [firestoreError, setFirestoreError] = useState<string | null>(null);
   const { showToast } = useToast();
 
   // Filters state
@@ -34,17 +39,20 @@ export const HistoryPage: React.FC = () => {
   useEffect(() => {
     setLoading(true);
     const unsubscribe = subscribeToAllTasks(
-      (items) => {
+      (items, meta) => {
         const sorted = [...items].sort((a, b) => {
-          const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
-          const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+          const aTime = toDateObject(a.createdAt)?.getTime() || 0;
+          const bTime = toDateObject(b.createdAt)?.getTime() || 0;
           return bTime - aTime;
         });
         setTasks(sorted);
+        setSyncMeta(meta);
+        setFirestoreError(null);
         setLoading(false);
       },
       (err) => {
         console.error('Failed to stream task history:', err);
+        setFirestoreError(err?.message || 'Failed to connect to Cloud Firestore.');
         setLoading(false);
       }
     );
@@ -69,7 +77,7 @@ export const HistoryPage: React.FC = () => {
       if (statusFilter !== 'all') {
         if (statusFilter === 'deleted') {
           if (!task.deleted) return false;
-        } else if (task.status !== statusFilter) {
+        } else if (task.status !== statusFilter || task.deleted) {
           return false;
         }
       }
@@ -132,8 +140,8 @@ export const HistoryPage: React.FC = () => {
         assignedTo: t.assignedTo,
         priority: t.priority,
         status: t.deleted ? 'DELETED' : t.status,
-        createdAt: t.createdAt?.toDate ? formatDateTime(t.createdAt.toDate()) : 'N/A',
-        completedAt: t.completedAt?.toDate ? formatDateTime(t.completedAt.toDate()) : '—',
+        createdAt: formatDateTime(t.createdAt),
+        completedAt: t.completedAt ? formatDateTime(t.completedAt) : '—',
       }));
 
       generateTasksPDF(exportItems, {
@@ -164,11 +172,31 @@ export const HistoryPage: React.FC = () => {
       {/* 1. Header with Title and Prominent Download PDF Button */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200/80 pb-6">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1.5 rounded-md bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-indigo-500/20">
               <History className="h-3.5 w-3.5" />
               Permanent Task Audit & Records
             </span>
+
+            {/* Cloud Firestore Sync Status Indicator */}
+            {syncMeta && !firestoreError && (
+              syncMeta.hasPendingWrites ? (
+                <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-500/20">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Syncing to Cloud...
+                </span>
+              ) : syncMeta.fromCache ? (
+                <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-300/40">
+                  <CloudOff className="h-3.5 w-3.5 text-slate-500" />
+                  Offline (Cached view)
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-500/20">
+                  <Cloud className="h-3.5 w-3.5" />
+                  Cloud Synced
+                </span>
+              )
+            )}
           </div>
           <h2 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
             Task History & Archives
@@ -204,6 +232,17 @@ export const HistoryPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Firestore Connection Error Banner */}
+      {firestoreError && (
+        <div className="flex items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+          <AlertTriangle className="h-5 w-5 shrink-0 text-rose-600" />
+          <div className="flex-1">
+            <span className="font-semibold">Cloud Connection Alert: </span>
+            <span>{firestoreError} Tasks will save locally and sync once connection is restored.</span>
+          </div>
+        </div>
+      )}
 
       {/* 2. Filter Bar with Show Deleted Tasks Toggle */}
       <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs">
@@ -305,7 +344,7 @@ export const HistoryPage: React.FC = () => {
         </div>
       </div>
 
-      {/* 3. Responsive Display: Desktop Table + Mobile Cards */}
+
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs">
         {loading ? (
           <div className="p-6">
@@ -359,12 +398,8 @@ export const HistoryPage: React.FC = () => {
                   {filteredTasks.map((task) => {
                     const memberColors = getMemberColors(task.assignedTo);
                     const initials = getInitials(task.assignedTo);
-                    const createdAtText = task.createdAt
-                      ? formatDateTime(task.createdAt.toDate ? task.createdAt.toDate() : new Date())
-                      : 'N/A';
-                    const completedAtText = task.completedAt
-                      ? formatDateTime(task.completedAt.toDate ? task.completedAt.toDate() : new Date())
-                      : null;
+                    const createdAtText = formatDateTime(task.createdAt);
+                    const completedAtText = task.completedAt ? formatDateTime(task.completedAt) : null;
 
                     return (
                       <tr
@@ -476,12 +511,8 @@ export const HistoryPage: React.FC = () => {
               {filteredTasks.map((task) => {
                 const memberColors = getMemberColors(task.assignedTo);
                 const initials = getInitials(task.assignedTo);
-                const createdAtText = task.createdAt
-                  ? formatDateTime(task.createdAt.toDate ? task.createdAt.toDate() : new Date())
-                  : 'N/A';
-                const completedAtText = task.completedAt
-                  ? formatDateTime(task.completedAt.toDate ? task.completedAt.toDate() : new Date())
-                  : null;
+                const createdAtText = formatDateTime(task.createdAt);
+                const completedAtText = task.completedAt ? formatDateTime(task.completedAt) : null;
 
                 return (
                   <div

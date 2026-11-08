@@ -75,12 +75,13 @@ Since there is no public sign-up page (to keep your business portal strictly int
 3. Under the **Sign-in method** tab, click **Email/Password**.
 4. Enable the first toggle (**Email/Password**) and click **Save**.
 5. Switch to the **Users** tab and click the **Add user** button.
-6. Create an account for each of your 4 team members:
-   - Member 1: `harshal@business.com` + password
-   - Member 2: `swayam@business.com` + password
-   - Member 3: `daksh@business.com` + password
-   - Member 4: `atharv@business.com` + password
-7. Share each member's credentials with them. They can now log in directly on the `/login` page.
+6. The 5 authorized team accounts in Firebase Authentication:
+   - Member 1: `harshal@gmail.com` (UID: `YAeP6c3JHtRj6aJzIUuHLNJsqL13`)
+   - Member 2: `swayam@gmail.com` (UID: `ey0O1eJCHxd6Mn2y6KKRYTQvLWh2`)
+   - Member 3: `daksh@gmail.com` (UID: `pYffmarasycB7klDJ1eaGjM9xvo2`)
+   - Member 4: `atharv@gmail.com` (UID: `ml4FyajmXDZqeSYKHy9ycrTtJfU2`)
+   - Admin: `kaalvion@gmail.com` (UID: `PlOcmP9KKLc1lf8ROjIflAyYcME3`)
+7. Share credentials with each member. They can log in directly on the `/login` page using their Gmail account.
 
 ---
 
@@ -95,22 +96,35 @@ Since there is no public sign-up page (to keep your business portal strictly int
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Verifies user is logged in
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    // Users collection:
-    // Any authenticated member can read profiles; each user can update their own
-    match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && request.auth.uid == userId;
+    function isAdmin() {
+      return isAuthenticated() && request.auth.uid == 'PlOcmP9KKLc1lf8ROjIflAyYcME3';
     }
 
-    // Tasks collection:
-    // All 4 authenticated team members can read, create, update, and manage tasks
+    function isTeamMember() {
+      return isAuthenticated() && (
+        request.auth.uid == 'YAeP6c3JHtRj6aJzIUuHLNJsqL13' || // Harshal
+        request.auth.uid == 'ey0O1eJCHxd6Mn2y6KKRYTQvLWh2' || // Swayam
+        request.auth.uid == 'pYffmarasycB7klDJ1eaGjM9xvo2' || // Daksh
+        request.auth.uid == 'ml4FyajmXDZqeSYKHy9ycrTtJfU2'    // Atharv
+      );
+    }
+
+    function isAuthorizedUser() {
+      return isTeamMember() || isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthorizedUser();
+      allow write: if isAuthorizedUser() && (request.auth.uid == userId || isAdmin());
+    }
+
     match /tasks/{taskId} {
-      allow read, create, update, delete: if isAuthenticated();
+      allow read, create, update: if isAuthorizedUser();
+      allow delete: if false; // Permanent deletion disabled
     }
   }
 }

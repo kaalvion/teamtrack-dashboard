@@ -37,8 +37,9 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({ task, isOpen
 
   const { showToast } = useToast();
 
+  // Initialize or update form state when task changes (preserving active user edits if isEditing)
   useEffect(() => {
-    if (task) {
+    if (task && !isEditing) {
       setTitle(task.title || '');
       setDescription(task.description || '');
       setAssignedTo(task.assignedTo || TEAM_MEMBERS[0]);
@@ -47,10 +48,16 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({ task, isOpen
       setDueDate(task.dueDate || '');
       setExtendedDate(task.extendedDate || '');
       setNotes(task.notes || '');
+    }
+  }, [task, isEditing]);
+
+  // Reset modal view states when opened or switched to a different task
+  useEffect(() => {
+    if (isOpen) {
       setIsEditing(false);
       setShowDeleteConfirm(false);
     }
-  }, [task]);
+  }, [isOpen, task?.id]);
 
   if (!isOpen || !task) return null;
 
@@ -115,13 +122,8 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({ task, isOpen
   const memberColors = getMemberColors(task.assignedTo);
   const initials = getInitials(task.assignedTo);
 
-  const createdAtText = task.createdAt
-    ? formatDateTime(task.createdAt.toDate ? task.createdAt.toDate() : new Date())
-    : 'Recently';
-
-  const completedAtText = task.completedAt
-    ? formatDateTime(task.completedAt.toDate ? task.completedAt.toDate() : new Date())
-    : null;
+  const createdAtText = formatDateTime(task.createdAt);
+  const completedAtText = task.completedAt ? formatDateTime(task.completedAt) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-200">

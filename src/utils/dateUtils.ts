@@ -1,35 +1,76 @@
 /**
- * Parse any date representation (Firestore Timestamp, Date, string, number)
+ * Parse any date representation (Firestore Timestamp, Date, string, number, or { seconds, nanoseconds })
  * into a valid JavaScript Date object, or null if invalid.
  */
 export const toDateObject = (val: any): Date | null => {
-  if (!val) return null;
-  // If it's a Firestore Timestamp with toDate()
+  if (val === null || val === undefined) return null;
+
+  // 1. If it's a Firestore Timestamp with toDate()
   if (typeof val?.toDate === 'function') {
     try {
       const d = val.toDate();
-      return isNaN(d.getTime()) ? null : d;
+      if (d instanceof Date && !isNaN(d.getTime())) return d;
     } catch {
       // fallback
     }
   }
-  // If it has seconds / nanoseconds property (Firestore JSON format or local cache)
-  if (typeof val?.seconds === 'number') {
-    const d = new Date(val.seconds * 1000);
-    return isNaN(d.getTime()) ? null : d;
+
+  // 2. If it has toMillis()
+  if (typeof val?.toMillis === 'function') {
+    try {
+      const ms = val.toMillis();
+      if (typeof ms === 'number' && !isNaN(ms)) return new Date(ms);
+    } catch {
+      // fallback
+    }
   }
+
+  // 3. If it has seconds / nanoseconds (Firestore JSON format or local cache)
+  if (typeof val?.seconds === 'number' && !isNaN(val.seconds)) {
+    const millis = val.seconds * 1000 + (val.nanoseconds ? Math.floor(val.nanoseconds / 1000000) : 0);
+    const d = new Date(millis);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // 4. If it has _seconds / _nanoseconds (alternative Firestore serialization)
+  if (typeof val?._seconds === 'number' && !isNaN(val._seconds)) {
+    const millis = val._seconds * 1000 + (val._nanoseconds ? Math.floor(val._nanoseconds / 1000000) : 0);
+    const d = new Date(millis);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // 5. Native JavaScript Date instance
   if (val instanceof Date) {
     return isNaN(val.getTime()) ? null : val;
   }
-  if (typeof val === 'number') {
-    const d = new Date(val);
+
+  // 6. Numeric timestamp (seconds or milliseconds)
+  if (typeof val === 'number' && !isNaN(val)) {
+    // If less than 100 billion, it's unix seconds; otherwise milliseconds
+    const ms = val < 100_000_000_000 ? val * 1000 : val;
+    const d = new Date(ms);
     return isNaN(d.getTime()) ? null : d;
   }
+
+  // 7. String representation
   if (typeof val === 'string') {
-    // Check if ISO or YYYY-MM-DD
-    const d = new Date(val);
+    const trimmed = val.trim();
+    if (!trimmed) return null;
+
+    // Specific check for Date-only YYYY-MM-DD to avoid UTC midnight timezone shifts
+    const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+    if (dateOnlyMatch) {
+      const year = parseInt(dateOnlyMatch[1], 10);
+      const month = parseInt(dateOnlyMatch[2], 10) - 1;
+      const day = parseInt(dateOnlyMatch[3], 10);
+      const localDate = new Date(year, month, day, 0, 0, 0, 0);
+      return isNaN(localDate.getTime()) ? null : localDate;
+    }
+
+    const d = new Date(trimmed);
     return isNaN(d.getTime()) ? null : d;
   }
+
   return null;
 };
 
@@ -64,7 +105,7 @@ export const isDateInRange = (
     }
 
     if (range === 'week') {
-      // Last 7 days or current week window
+      // Last 7 days or current week window (Sunday to Saturday)
       const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay(), 0, 0, 0, 0);
       const endOfWeek = new Date(startOfWeek.getTime() + 7 * 24 * 60 * 60 * 1000 - 1);
       const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -73,9 +114,10 @@ export const isDateInRange = (
 
     if (range === 'month') {
       // Matches if within the current calendar month OR within the last 30 days
-      const sameMonthAndYear = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      return sameMonthAndYear || d >= thirtyDaysAgo;
+      return (d >= startOfMonth && d <= endOfMonth) || d >= thirtyDaysAgo;
     }
 
     return true;
@@ -92,7 +134,7 @@ export const isDateInRange = (
  * Format a Date object, ISO string, or Firestore timestamp into a readable string:
  * e.g., "07 Nov 2026, 10:30 AM" or date-only "07 Nov 2026"
  */
-export const formatDateTime = (date: Date | string | number | null | undefined): string => {
+export const formatDateTime = (date: any): string => {
   const d = toDateObject(date);
   if (!d) return 'Recently';
 
@@ -110,7 +152,7 @@ export const formatDateTime = (date: Date | string | number | null | undefined):
   return `${day} ${month} ${year}, ${formattedHours}:${minutes} ${ampm}`;
 };
 
-export const formatDate = (date: Date | string | number | null | undefined): string => {
+export const formatDate = (date: any): string => {
   const d = toDateObject(date);
   if (!d) return 'N/A';
 
@@ -122,7 +164,11 @@ export const formatDate = (date: Date | string | number | null | undefined): str
 };
 
 export const getTodayISOString = (): string => {
-  return new Date().toISOString().split('T')[0];
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
 /**
@@ -138,9 +184,17 @@ export const isTaskOverdue = (
   const deadlineStr = extendedDate || dueDate;
   if (!deadlineStr) return false;
 
-  const deadline = new Date(deadlineStr);
-  if (isNaN(deadline.getTime())) return false;
+  const deadline = toDateObject(deadlineStr);
+  if (!deadline) return false;
 
-  const endOfDeadline = new Date(deadline.getFullYear(), deadline.getMonth(), deadline.getDate(), 23, 59, 59, 999);
+  const endOfDeadline = new Date(
+    deadline.getFullYear(),
+    deadline.getMonth(),
+    deadline.getDate(),
+    23,
+    59,
+    59,
+    999
+  );
   return new Date() > endOfDeadline;
 };

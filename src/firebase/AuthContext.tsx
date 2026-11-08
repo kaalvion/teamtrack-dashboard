@@ -7,6 +7,7 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db, UserDocument } from './firebase';
+import { getAccountByEmailOrUid } from '../utils/teamConstants';
 
 export interface AuthContextType {
   currentUser: User | null;
@@ -31,14 +32,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
 
       if (user) {
-        // Derive initial profile synchronously from user email/displayName
+        // Match verified account by UID or Gmail address, falling back to email prefix
+        const matched = getAccountByEmailOrUid(user.uid) || getAccountByEmailOrUid(user.email || '');
         const nameFromEmail = user.email ? user.email.split('@')[0] : 'Team Member';
-        const formattedName = user.displayName || (nameFromEmail.charAt(0).toUpperCase() + nameFromEmail.slice(1));
+        const formattedName = matched?.name || user.displayName || (nameFromEmail.charAt(0).toUpperCase() + nameFromEmail.slice(1));
+        const role = (matched?.role || 'member') as 'member';
         
         setUserProfile({
           name: formattedName,
           email: user.email || '',
-          role: 'member',
+          role: role,
           createdAt: null as any
         });
 

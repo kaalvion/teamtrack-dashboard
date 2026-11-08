@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Plus, AlertCircle } from 'lucide-react';
+import { X, Plus, AlertCircle, Loader2 } from 'lucide-react';
 import { TEAM_MEMBERS } from '../utils/teamConstants';
 import { TaskPriority, createTask } from '../firebase/tasks';
 import { useToast } from './ToastContext';
@@ -18,6 +18,7 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, ass
   const [dueDate, setDueDate] = useState<string>('');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const { showToast } = useToast();
 
   if (!isOpen) return null;
@@ -39,39 +40,44 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, ass
       return;
     }
 
-    // Optimistically close modal and notify immediately for instant UI feedback
-    const taskTitle = trimmedTitle;
-    const taskDesc = trimmedDesc;
-    const taskAssignee = assignedTo;
-    const taskPriority = priority;
-    const taskDueDate = dueDate;
-    const taskNotes = notes.trim();
+    if (isSubmitting) return;
 
-    // Reset form immediately
-    setTitle('');
-    setDescription('');
-    setNotes('');
-    setDueDate('');
-    setPriority('medium');
-    setAssignedTo(TEAM_MEMBERS[0]);
-    onClose();
+    try {
+      setIsSubmitting(true);
 
-    showToast(`Task "${taskTitle}" created!`, 'success');
+      // Await the Firestore write operation so failure is never hidden
+      await createTask(
+        trimmedTitle,
+        trimmedDesc,
+        assignedTo,
+        assignedBy || 'Team Member',
+        priority,
+        notes.trim(),
+        dueDate || null,
+        null // extendedDate is empty initially
+      );
 
-    // Perform firestore write asynchronously in background
-    createTask(
-      taskTitle,
-      taskDesc,
-      taskAssignee,
-      assignedBy || 'Team Member',
-      taskPriority,
-      taskNotes,
-      taskDueDate || null,
-      null // extendedDate is empty initially
-    ).catch((err: any) => {
+      // Display success toast ONLY after the write promise resolves
+      showToast(`Task "${trimmedTitle}" created and saved to cloud!`, 'success');
+
+      // Reset form state and close modal
+      setTitle('');
+      setDescription('');
+      setNotes('');
+      setDueDate('');
+      setPriority('medium');
+      setAssignedTo(TEAM_MEMBERS[0]);
+      onClose();
+    } catch (err: any) {
       console.error('Error creating task in Firestore:', err);
-      showToast(err?.message || 'Failed to sync task with Firebase. Check your connection or Firestore rules.', 'error');
-    });
+      const errorMessage =
+        err?.message || 'Failed to save task to Cloud Firestore. Please check your network connection and Firestore rules.';
+      setError(errorMessage);
+      showToast(errorMessage, 'error');
+      // Notice: Modal remains OPEN so entered information is never lost
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -90,7 +96,8 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, ass
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+            disabled={isSubmitting}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50 transition cursor-pointer"
           >
             <X className="h-5 w-5" />
           </button>
@@ -100,7 +107,7 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, ass
         {error && (
           <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
             <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
-            <span>{error}</span>
+            <span className="leading-relaxed">{error}</span>
           </div>
         )}
 
@@ -113,10 +120,11 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, ass
             <input
               type="text"
               required
+              disabled={isSubmitting}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g., Finalize Q3 Financial Report"
-              className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600"
+              className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 disabled:bg-slate-50 disabled:text-slate-500"
             />
           </div>
 
@@ -127,10 +135,11 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, ass
             <textarea
               rows={3}
               required
+              disabled={isSubmitting}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Outline specific objectives, deliverables, or checklist items..."
-              className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600"
+              className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 disabled:bg-slate-50 disabled:text-slate-500"
             />
           </div>
 
@@ -140,9 +149,10 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, ass
                 Assign To
               </label>
               <select
+                disabled={isSubmitting}
                 value={assignedTo}
                 onChange={(e) => setAssignedTo(e.target.value)}
-                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
+                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white disabled:bg-slate-50 disabled:text-slate-500"
               >
                 {TEAM_MEMBERS.map((m) => (
                   <option key={m} value={m}>
@@ -157,9 +167,10 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, ass
                 Priority
               </label>
               <select
+                disabled={isSubmitting}
                 value={priority}
                 onChange={(e) => setPriority(e.target.value as TaskPriority)}
-                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
+                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white disabled:bg-slate-50 disabled:text-slate-500"
               >
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
@@ -174,9 +185,10 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, ass
             </label>
             <input
               type="date"
+              disabled={isSubmitting}
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
+              className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white disabled:bg-slate-50 disabled:text-slate-500"
             />
           </div>
 
@@ -186,10 +198,11 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, ass
             </label>
             <input
               type="text"
+              disabled={isSubmitting}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="e.g., Target completion by 4:00 PM today"
-              className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600"
+              className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 disabled:bg-slate-50 disabled:text-slate-500"
             />
           </div>
 
@@ -198,15 +211,24 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, ass
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+              disabled={isSubmitting}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 transition cursor-pointer"
+              disabled={isSubmitting}
+              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer"
             >
-              <span>Create Task</span>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Saving to Cloud...</span>
+                </>
+              ) : (
+                <span>Create Task</span>
+              )}
             </button>
           </div>
         </form>

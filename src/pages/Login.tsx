@@ -108,7 +108,7 @@ export const LoginPage: React.FC = () => {
                   if (error) setError(null);
                 }}
                 disabled={loading}
-                placeholder="member@business.com"
+                placeholder="name@gmail.com"
                 className="block w-full rounded-xl border border-slate-300 py-2.5 pl-10 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 disabled:bg-slate-100"
               />
             </div>
