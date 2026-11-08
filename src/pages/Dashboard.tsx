@@ -8,7 +8,8 @@ import { AddTaskModal } from '../components/AddTaskModal';
 import { TaskDetailsModal } from '../components/TaskDetailsModal';
 import { TaskCardSkeleton } from '../components/Skeletons';
 import { isDateInRange, toDateObject } from '../utils/dateUtils';
-import { Plus, CheckSquare, Sparkles, Cloud, CloudOff, AlertTriangle, Loader2 } from 'lucide-react';
+import { TEAM_MEMBERS, getMemberColors, getInitials } from '../utils/teamConstants';
+import { Plus, CheckSquare, Sparkles, Cloud, CloudOff, AlertTriangle, Loader2, ChevronDown, ChevronRight, Inbox, CheckCircle2, Clock } from 'lucide-react';
 
 export const DashboardPage: React.FC = () => {
   const { userProfile, currentUser } = useAuth();
@@ -28,6 +29,16 @@ export const DashboardPage: React.FC = () => {
     dateRange: 'all',
     searchQuery: '',
   });
+
+  // Collapsible sections state: track collapsed members (false = expanded by default)
+  const [collapsedMembers, setCollapsedMembers] = useState<Record<string, boolean>>({});
+
+  const toggleMemberCollapse = (member: string) => {
+    setCollapsedMembers((prev) => ({
+      ...prev,
+      [member]: !prev[member],
+    }));
+  };
 
   const memberName =
     userProfile?.name ||
@@ -111,6 +122,48 @@ export const DashboardPage: React.FC = () => {
       return true;
     });
   }, [tasks, filters]);
+
+  // Determine which member sections should be visible based on filter
+  const visibleMembers = useMemo(() => {
+    if (filters.member === 'all') {
+      return [...TEAM_MEMBERS];
+    }
+    return TEAM_MEMBERS.filter((m) => m === filters.member);
+  }, [filters.member]);
+
+  // Group filtered tasks by member name
+  const tasksByMember = useMemo(() => {
+    const map: Record<string, TaskItem[]> = {};
+    visibleMembers.forEach((member) => {
+      map[member] = [];
+    });
+
+    filteredTasks.forEach((task) => {
+      if (map[task.assignedTo]) {
+        map[task.assignedTo].push(task);
+      } else if (filters.member === 'all' || filters.member === task.assignedTo) {
+        // Fallback for any task assigned to an account outside predefined list (e.g. Kaalvion Admin)
+        if (!map[task.assignedTo]) {
+          map[task.assignedTo] = [];
+        }
+        map[task.assignedTo].push(task);
+      }
+    });
+
+    return map;
+  }, [filteredTasks, visibleMembers, filters.member]);
+
+  // Ordered list of member keys to display
+  const displayMemberKeys = useMemo(() => {
+    const keys = [...visibleMembers];
+    // Include any extra members found in tasksByMember that aren't in visibleMembers
+    Object.keys(tasksByMember).forEach((key) => {
+      if (!keys.includes(key as any)) {
+        keys.push(key as any);
+      }
+    });
+    return keys;
+  }, [visibleMembers, tasksByMember]);
 
   const handleResetFilters = () => {
     setFilters({
@@ -199,42 +252,166 @@ export const DashboardPage: React.FC = () => {
         onReset={handleResetFilters}
       />
 
-      {/* 4. Task Grid */}
+      {/* 4. Member-Wise Task Sections */}
       {loading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, idx) => (
             <TaskCardSkeleton key={idx} />
           ))}
         </div>
-      ) : filteredTasks.length === 0 ? (
+      ) : filteredTasks.length === 0 && filters.member !== 'all' ? (
+        <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-14 px-4 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
+            <CheckSquare className="h-6 w-6" />
+          </div>
+          <h3 className="mt-4 text-base font-semibold text-slate-900">No tasks found for {filters.member}</h3>
+          <p className="mt-1 text-sm text-slate-500 max-w-sm">
+            No tasks match your selected filter criteria. Try resetting filters.
+          </p>
+          <button
+            onClick={handleResetFilters}
+            className="mt-4 text-xs font-semibold text-indigo-600 hover:text-indigo-500 cursor-pointer"
+          >
+            Clear all filters
+          </button>
+        </div>
+      ) : filteredTasks.length === 0 && tasks.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-14 px-4 text-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
             <CheckSquare className="h-6 w-6" />
           </div>
           <h3 className="mt-4 text-base font-semibold text-slate-900">No tasks found</h3>
           <p className="mt-1 text-sm text-slate-500 max-w-sm">
-            {tasks.length === 0
-              ? 'No active tasks yet. Click "Add Task" to assign work to your team.'
-              : 'No tasks match your selected filter criteria. Try resetting filters.'}
+            No active tasks yet. Click "Add Task" to assign work to your team.
           </p>
-          {tasks.length > 0 && (
-            <button
-              onClick={handleResetFilters}
-              className="mt-4 text-xs font-semibold text-indigo-600 hover:text-indigo-500"
-            >
-              Clear all filters
-            </button>
-          )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredTasks.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              onClick={(clickedTask) => setSelectedTask(clickedTask)}
-            />
-          ))}
+        <div className="space-y-6">
+          {displayMemberKeys.map((member) => {
+            const memberTasks = tasksByMember[member] || [];
+            const isCollapsed = !!collapsedMembers[member];
+            const colors = getMemberColors(member);
+            const initials = getInitials(member);
+            const taskCount = memberTasks.length;
+            const completedCount = memberTasks.filter((t) => t.status === 'completed').length;
+            const activeCount = taskCount - completedCount;
+
+            return (
+              <section
+                key={member}
+                aria-label={`Tasks assigned to ${member}`}
+                className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xs transition-all hover:border-slate-300"
+              >
+                {/* Collapsible Header */}
+                <button
+                  type="button"
+                  onClick={() => toggleMemberCollapse(member)}
+                  className="w-full flex items-center justify-between p-4 sm:px-6 bg-white hover:bg-slate-50/70 transition-colors text-left border-b border-slate-100 cursor-pointer select-none"
+                  aria-expanded={!isCollapsed}
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    {/* Avatar Initials Badge with official member color palette */}
+                    <div
+                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl font-bold text-sm tracking-wide shadow-xs ring-2 ${colors.bg} ${colors.text} ${colors.ring}`}
+                    >
+                      {initials}
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-base font-semibold text-slate-900 tracking-tight">
+                          {member}
+                        </span>
+                        <span className="text-xs font-semibold text-slate-400">
+                          ({initials})
+                        </span>
+                      </div>
+                      
+                      {/* Secondary status breakdown */}
+                      <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-500">
+                        {taskCount === 0 ? (
+                          <span>0 active tasks</span>
+                        ) : (
+                          <>
+                            <span className="inline-flex items-center gap-1 font-medium text-slate-700">
+                              <Clock className="h-3 w-3 text-slate-400" />
+                              {activeCount} active
+                            </span>
+                            <span className="text-slate-300">•</span>
+                            <span className="inline-flex items-center gap-1 font-medium text-emerald-600">
+                              <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                              {completedCount} done
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 shrink-0">
+                    {/* Task Count Badge */}
+                    <span
+                      className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${
+                        taskCount > 0
+                          ? `${colors.bg} ${colors.text} ${colors.ring}`
+                          : 'bg-slate-100 text-slate-500 ring-slate-200'
+                      }`}
+                    >
+                      {taskCount} {taskCount === 1 ? 'Task' : 'Tasks'}
+                    </span>
+
+                    {/* Chevron Indicator with smooth transition */}
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
+                      {isCollapsed ? (
+                        <ChevronRight className="h-4 w-4 transition-transform duration-200 ease-in-out" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 transition-transform duration-200 ease-in-out" />
+                      )}
+                    </div>
+                  </div>
+                </button>
+
+                {/* Collapsible Content with smooth CSS grid transition to prevent layout jumping */}
+                <div
+                  className={`grid transition-[grid-template-rows,opacity] duration-250 ease-in-out ${
+                    isCollapsed ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100'
+                  }`}
+                >
+                  <div className="overflow-hidden">
+                    <div className="p-4 sm:p-6 bg-slate-50/40">
+                      {memberTasks.length === 0 ? (
+                        <div className="flex items-center gap-3 rounded-xl border border-dashed border-slate-200 bg-white py-3.5 px-4 text-slate-600">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+                            <Inbox className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-slate-800">
+                              No tasks for {member}
+                            </p>
+                            <p className="text-xs text-slate-400 truncate">
+                              {filters.status !== 'all' || filters.searchQuery || filters.dateRange !== 'all'
+                                ? 'No tasks match current filter criteria.'
+                                : 'No active tasks assigned.'}
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                          {memberTasks.map((task) => (
+                            <TaskCard
+                              key={task.id}
+                              task={task}
+                              onClick={(clickedTask) => setSelectedTask(clickedTask)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            );
+          })}
         </div>
       )}
 
